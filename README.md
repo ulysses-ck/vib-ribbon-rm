@@ -1,75 +1,42 @@
-# Vib Ribbon Remake
+# Vib-Ribbon RM
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Remake web **experimental**: audio local → features offline → curso procedural → plataforma con scroll ligado al tiempo de reproducción. Inspirado en *Vib-Ribbon*; no es una copia oficial.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+React 19 · Vite 8 · TypeScript · Canvas 2D · Web Audio (`AudioBuffer` + `AnalyserNode`) · Vitest
 
-## React Compiler
+## Cómo correr
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install
+pnpm dev          # http://localhost:5173
+pnpm test         # tests del núcleo
+pnpm run build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Qué hay hoy
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Área | Rol |
+|------|-----|
+| `src/core/audioClock.ts` | Reloj de juego, volumen, fundido al pausar, `getSimWorldTime()` con pausa congelada |
+| `src/audio/` | Decodificación + `FeatureTrack` (RMS, flux, bandas, onsets) |
+| `src/gen/courseGenerator.ts` | Curso determinista (semilla + parámetros) |
+| `src/game/sim.ts` | Física básica, pinchos/pozos, ribbon H/J/K/L |
+| `src/render/GameCanvas.tsx` | Loop `rAF`, FFT en vivo, debug offline, DPR |
+| `src/input/` | Teclas H J K L reconfigurables + táctil en mobile/tablet |
+| `src/App.tsx` | Menú, opciones, partida, overlay fin/reintento |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Roadmap (hacer el juego)
+
+- [ ] **Preview de curso**: seek + dibujo del nivel sin avanzar sim / sin depender del play en vivo
+- [ ] **Ritmo**: beat / BPM u onsets más musicales; opción de alinear obstáculos al compás
+- [ ] **Ribbon real**: deformaciones y reglas más cercanas al original; feedback visual fuerte
+- [ ] **Puntuación y estados**: combo, fallos, reinicio rápido, tabla local
+- [ ] **Contenido**: tutorial in-game, pista demo en `public/` (opcional)
+- [ ] **Pulido**: pausa con overlay; opciones de accesibilidad (contraste, velocidad, input)
+- [ ] **Empaquetado**: PWA o build para itch.io; notas sobre música provista por el usuario
+
+---
+
+*Proyecto educativo / fan; derechos de marca y música son responsabilidad de quien publique.*
