@@ -18,6 +18,7 @@ function makeTrack(n: number): FeatureTrack {
     rms,
     flux,
     bandEnergy,
+    onsetStrength: new Float32Array(n),
   }
 }
 
@@ -30,6 +31,9 @@ describe('generateCourse', () => {
       amplitude: 1,
       fluxThreshold: 0.35,
       minObstacleGapWorld: 80,
+      difficultyRampPerMin: 0.2,
+      maxObstaclesPerMinute: 80,
+      onsetSyncWindowHops: 2,
     }
     const a = generateCourse(track, params)
     const b = generateCourse(track, params)
@@ -49,6 +53,9 @@ describe('generateCourse', () => {
       amplitude: 1,
       fluxThreshold: 0.2,
       minObstacleGapWorld: 40,
+      difficultyRampPerMin: 0.1,
+      maxObstaclesPerMinute: 90,
+      onsetSyncWindowHops: 2,
     }
     const a = generateCourse(track, { ...base, seed: 1 })
     const b = generateCourse(track, { ...base, seed: 2 })

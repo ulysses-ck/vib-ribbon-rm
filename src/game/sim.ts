@@ -9,12 +9,19 @@ export const PLAYER_H = 36
 /** Player world X = scroll + this anchor (scroll grows with time). */
 export const PLAYER_ANCHOR_X = 140
 
+/**
+ * Ribbon MVP: K salto; H/L inclinan `ribbonLean`; J rota `ribbonPose` (0–3).
+ * Pose 2–3 achatan la hitbox de pinchos (pie “más alto” = más margen).
+ */
 export interface GameSimState {
   scroll: number
   playerY: number
   playerVy: number
   alive: boolean
   reason: 'playing' | 'pit' | 'spike' | 'bounds'
+  ribbonPose: number
+  /** -1 izquierda … 1 derecha; decae cuando no hay input. */
+  ribbonLean: number
 }
 
 export function createSimState(): GameSimState {
@@ -24,7 +31,17 @@ export function createSimState(): GameSimState {
     playerVy: 0,
     alive: true,
     reason: 'playing',
+    ribbonPose: 0,
+    ribbonLean: 0,
   }
+}
+
+/** Reducción virtual del pie para test de pinchos según pose (px). */
+export function spikeFootClearance(state: GameSimState): number {
+  if (state.ribbonPose === 2) return 24
+  if (state.ribbonPose === 3) return 14
+  if (state.ribbonPose === 1) return 8
+  return 0
 }
 
 /** Linear interpolate ground Y; returns null if `x` lies in a pit hazard. */
@@ -58,19 +75,21 @@ function spikeHit(
   course: CourseData,
   px: number,
   footY: number,
+  footClearance: number,
 ): CourseObstacle | null {
+  const foot = footY - footClearance
   for (const o of course.obstacles) {
     if (o.kind !== 'spike') continue
     if (px < o.x0 || px > o.x1) continue
     const gy = groundYAt(course, px)
-    if (footY > gy - o.clearance + 8 && footY <= gy + 12) return o
+    if (foot > gy - o.clearance + 8 && foot <= gy + 12) return o
   }
   return null
 }
 
 /**
  * Advance simulation by `dtSec` using `worldTimeSec` for scroll position.
- * `pressK` triggers jump (Vib-Ribbon style default on K); H/J/L reserved for future ribbon moves.
+ * `pressK` salto; `pressJ` cicla pose; `pressH`/`pressL` empujan ribbonLean.
  */
 export function tickSim(
   state: GameSimState,
@@ -81,9 +100,20 @@ export function tickSim(
 ): void {
   if (!state.alive) return
   const jumpRequested = input.pressK
-  void input.pressH
-  void input.pressJ
-  void input.pressL
+
+  if (input.pressJ) {
+    state.ribbonPose = (state.ribbonPose + 1) % 4
+  }
+  if (input.pressH) {
+    state.ribbonLean = Math.max(-1, state.ribbonLean - 0.42)
+  }
+  if (input.pressL) {
+    state.ribbonLean = Math.min(1, state.ribbonLean + 0.42)
+  }
+  if (dtSec > 0) {
+    state.ribbonLean *= Math.exp(-4.2 * dtSec)
+    if (Math.abs(state.ribbonLean) < 0.02) state.ribbonLean = 0
+  }
 
   state.scroll = worldTimeSec * SCROLL_SPEED
   const px = state.scroll + PLAYER_ANCHOR_X
@@ -117,7 +147,8 @@ export function tickSim(
   }
 
   const foot = state.playerY + PLAYER_H
-  if (spikeHit(course, px, foot)) {
+  const clear = spikeFootClearance(state)
+  if (spikeHit(course, px, foot, clear)) {
     state.alive = false
     state.reason = 'spike'
   }
@@ -135,4 +166,6 @@ export function resetSim(state: GameSimState, course: CourseData): void {
   state.playerVy = 0
   state.alive = true
   state.reason = 'playing'
+  state.ribbonPose = 0
+  state.ribbonLean = 0
 }

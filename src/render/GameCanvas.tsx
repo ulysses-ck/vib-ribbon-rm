@@ -179,6 +179,26 @@ export function GameCanvas({
       ctx.fill()
     }
 
+    /** Polilínea tipo ribbon anclada al jugador (MVP vectorial). */
+    const drawRibbon = () => {
+      const x = PLAYER_ANCHOR_X
+      const y = sim.playerY + 8
+      const lean = sim.ribbonLean
+      const pose = sim.ribbonPose
+      const sway = lean * 22
+      const lift = 14 + pose * 5
+      ctx.strokeStyle = 'rgba(190, 255, 210, 0.82)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(x - 8 + sway * 0.3, y + 4)
+      ctx.lineTo(x + sway * 0.55, y - lift * 0.45)
+      ctx.lineTo(x + 12 + sway, y - lift)
+      ctx.lineTo(x + 6 + sway * 0.4, y - lift * 0.35)
+      ctx.lineTo(x - 4 + sway * 0.2, y - 2)
+      ctx.closePath()
+      ctx.stroke()
+    }
+
     const loop = (now: number) => {
       const lw = logicalSize.w
       const lh = logicalSize.h
@@ -198,8 +218,10 @@ export function GameCanvas({
       const frame: FrameInput = { ...edgeRef.current }
       edgeRef.current = emptyFrameInput()
 
-      const t = clock.getWorldTime()
-      tickSim(sim, course, t, dt, frame)
+      const t = clock.getSimWorldTime()
+      const dtSim =
+        clock.isSimWorldFrozen() || !clock.isPlaying() ? 0 : dt
+      tickSim(sim, course, t, dtSim, frame)
 
       if (onHud) {
         if (sim.alive !== lastHudRef.current.alive || sim.reason !== lastHudRef.current.reason) {
@@ -218,6 +240,7 @@ export function GameCanvas({
       drawFeatureDebug(w, t)
       drawCourse(sim.scroll, w, h)
       drawPlayer()
+      drawRibbon()
 
       ctx.fillStyle = 'rgba(255,255,255,0.55)'
       ctx.font = '12px ui-monospace, monospace'

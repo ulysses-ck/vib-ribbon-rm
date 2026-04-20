@@ -11,6 +11,11 @@ import {
   saveControlSettings,
   type ControlSettings,
 } from './input/controlSettings'
+import {
+  loadAppSettings,
+  saveAppSettings,
+  type PersistedAppSettings,
+} from './input/appSettingsStorage'
 import type { GameActionSlot } from './input/frameInput'
 import { GameCanvas } from './render/GameCanvas'
 import { useTouchUi } from './ui/useTouchUi'
@@ -19,10 +24,10 @@ import './App.css'
 type Screen = 'menu' | 'options' | 'play'
 
 const SLOT_LABEL: Record<GameActionSlot, string> = {
-  pressH: 'H — hueco / forma (reservado)',
-  pressJ: 'J — forma (reservado)',
+  pressH: 'H — inclinar ribbon (izquierda)',
+  pressJ: 'J — ciclar pose ribbon (hitbox)',
   pressK: 'K — salto',
-  pressL: 'L — forma (reservado)',
+  pressL: 'L — inclinar ribbon (derecha)',
 }
 
 const defaultGenParams = (): CourseGenParams => ({
@@ -31,7 +36,13 @@ const defaultGenParams = (): CourseGenParams => ({
   amplitude: 1,
   fluxThreshold: 0.52,
   minObstacleGapWorld: 120,
+  difficultyRampPerMin: 0.35,
+  maxObstaclesPerMinute: 48,
+  onsetSyncWindowHops: 3,
 })
+
+const initialPersisted = (): PersistedAppSettings =>
+  loadAppSettings(defaultGenParams())
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!el || !(el instanceof HTMLElement)) return false
@@ -46,9 +57,11 @@ export default function App() {
   const [loadedName, setLoadedName] = useState<string | null>(null)
   const [features, setFeatures] = useState<FeatureTrack | null>(null)
   const [course, setCourse] = useState<CourseData | null>(null)
-  const [offsetMs, setOffsetMs] = useState(0)
-  const [volume, setVolume] = useState(0.85)
-  const [genParams, setGenParams] = useState<CourseGenParams>(defaultGenParams)
+  const [offsetMs, setOffsetMs] = useState(() => initialPersisted().offsetMs)
+  const [volume, setVolume] = useState(() => initialPersisted().volume)
+  const [genParams, setGenParams] = useState<CourseGenParams>(
+    () => initialPersisted().genParams,
+  )
   const [ended, setEnded] = useState(false)
   const [playUiTick, setPlayUiTick] = useState(0)
   const [controls, setControls] = useState<ControlSettings>(() => loadControlSettings())
@@ -85,6 +98,18 @@ export default function App() {
     if (!clock) return
     clock.setVolume(volume)
   }, [clock, volume])
+
+  useEffect(() => {
+    const t = globalThis.window.setTimeout(() => {
+      saveAppSettings({
+        version: 1,
+        offsetMs,
+        volume,
+        genParams,
+      })
+    }, 450)
+    return () => globalThis.window.clearTimeout(t)
+  }, [offsetMs, volume, genParams])
 
   /** Al perder, bajar volumen y pausar para que la música no siga en el overlay. */
   useEffect(() => {
@@ -250,8 +275,8 @@ export default function App() {
             )}
           </p>
           <p className="hint keys">
-            Teclas <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> (por defecto):{' '}
-            <strong>K</strong> salta. Reasignación en Opciones. Pausa: <kbd>P</kbd>.
+            Teclas <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd>: inclinar ribbon, pose,
+            salto. Reasignación en Opciones. Pausa: <kbd>P</kbd>.
           </p>
           <p className="hint tutorial">
             Tutorial: cargá una pista, ajustá compensación (ms) si el scroll va desfasado, iniciá
@@ -369,12 +394,50 @@ export default function App() {
             />
             <output>{Math.round(genParams.minObstacleGapWorld)}</output>
           </label>
+          <label className="field">
+            <span>Rampa de dificultad (por min. de audio)</span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              value={Math.round(genParams.difficultyRampPerMin * 100)}
+              onChange={(e) =>
+                setGenParams((p) => ({
+                  ...p,
+                  difficultyRampPerMin: Number(e.target.value) / 100,
+                }))
+              }
+            />
+            <output>{genParams.difficultyRampPerMin.toFixed(2)}</output>
+          </label>
+          <label className="field">
+            <span>Máx. obstáculos por minuto</span>
+            <input
+              type="range"
+              min={15}
+              max={120}
+              value={Math.round(genParams.maxObstaclesPerMinute)}
+              onChange={(e) =>
+                setGenParams((p) => ({
+                  ...p,
+                  maxObstaclesPerMinute: Number(e.target.value),
+                }))
+              }
+            />
+            <output>{Math.round(genParams.maxObstaclesPerMinute)}</output>
+          </label>
           <div className="menu-row">
             <button
               type="button"
               className="btn"
               onClick={() => {
                 if (features) rebuildCourse(features, genParams)
+                saveAppSettings({
+                  version: 1,
+                  offsetMs,
+                  volume,
+                  genParams,
+                })
                 setScreen('menu')
               }}
             >
@@ -447,8 +510,8 @@ export default function App() {
           </div>
 
           <p className="hint keys">
-            <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd>: la ranura <strong>K</strong> es salto
-            (reasignable). Barra: seek en buffer. Offset en opciones afecta el tiempo de mundo.
+            <kbd>H</kbd>/<kbd>L</kbd> inclinan el ribbon; <kbd>J</kbd> cambia pose (afecta pinchos);{' '}
+            <kbd>K</kbd> salto. Barra: seek. Offset en opciones afecta el tiempo de mundo.
           </p>
         </section>
       )}

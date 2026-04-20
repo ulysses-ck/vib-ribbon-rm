@@ -29,6 +29,15 @@ function maxBandSum(track: FeatureTrack, i: number): number {
   return s
 }
 
+function nearOnset(track: FeatureTrack, i: number, w: number): boolean {
+  const lo = Math.max(0, i - w)
+  const hi = Math.min(track.onsetStrength.length - 1, i + w)
+  for (let j = lo; j <= hi; j++) {
+    if ((track.onsetStrength[j] ?? 0) > 0.45) return true
+  }
+  return false
+}
+
 /**
  * Maps feature columns to a ground polyline + hazards.
  * Same inputs ⇒ same `CourseData`.
@@ -46,6 +55,7 @@ export function generateCourse(
   const baseline = 320
   let lastObstacleEnd = -Number.MAX_VALUE
   const minGap = params.minObstacleGapWorld
+  const wOn = Math.max(0, Math.floor(params.onsetSyncWindowHops))
 
   for (let i = 0; i < n; i++) {
     const x = i * dx
@@ -60,8 +70,18 @@ export function generateCourse(
     const y = baseline + e * params.amplitude * 40 + wobble * 20
     ground.push({ x, y })
 
-    const canSpawn = x - lastObstacleEnd >= minGap
-    if (canSpawn && norm > params.fluxThreshold && rng() > 0.72) {
+    const tSec = i * track.hopDuration
+    const tMin = Math.max(tSec / 60, 1 / 120)
+    const rateOk = obstacles.length / tMin < params.maxObstaclesPerMinute
+
+    const difficultyMul =
+      1 + Math.min(1.55, params.difficultyRampPerMin * (tSec / 60))
+    const effectiveFluxThr = params.fluxThreshold / difficultyMul
+    const onsetBoost = nearOnset(track, i, wOn) ? 0.1 : 0
+    const fluxGate = Math.max(0.08, effectiveFluxThr - onsetBoost)
+
+    const canSpawn = x - lastObstacleEnd >= minGap && rateOk
+    if (canSpawn && norm > fluxGate && rng() > 0.72) {
       const width = 48 + rng() * 100
       if (rng() < 0.48) {
         const o: CourseObstacle = {

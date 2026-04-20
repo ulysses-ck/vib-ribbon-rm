@@ -1,3 +1,5 @@
+import { fadeScheduleEndDelayMs } from './gainRamp'
+
 /** Narrow public surface used by UI and render loop. */
 export interface AudioClock {
   readonly context: AudioContext
@@ -11,6 +13,13 @@ export interface AudioClock {
   setVolume(linear: number): void
   getVolume(): number
   getWorldTime(): number
+  /**
+   * Tiempo de mundo para la simulación: fijo durante fundido de pausa para no
+   * avanzar el scroll mientras el audio baja de volumen.
+   */
+  getSimWorldTime(): number
+  /** True durante el fundido de pausa: el mundo no debe avanzar por dt. */
+  isSimWorldFrozen(): boolean
   /** Tiempo en el buffer decodificado (sin offset de compensación). */
   getBufferTime(): number
   isPlaying(): boolean
@@ -43,6 +52,8 @@ export class AudioClockImpl implements AudioClock {
   /** Volumen lineal elegido por el usuario (0–1); el nodo gain puede animarse durante fundidos. */
   private userGainLinear = 0.85
   private fadeTimeoutId: ReturnType<typeof setTimeout> | null = null
+  /** Mientras hay fundido de pausa activo, el scroll del juego usa este instante. */
+  private simWorldHoldSec: number | null = null
 
   constructor() {
     this.context = new AudioContext()
@@ -68,6 +79,7 @@ export class AudioClockImpl implements AudioClock {
 
   setBuffer(audioBuffer: AudioBuffer): void {
     this.cancelFadeTimeout()
+    this.simWorldHoldSec = null
     this.stopSourceIfAny()
     this.buffer = audioBuffer
     this.pausePosition = 0
@@ -120,6 +132,15 @@ export class AudioClockImpl implements AudioClock {
     return Math.max(0, Math.min(d, shifted))
   }
 
+  getSimWorldTime(): number {
+    if (this.simWorldHoldSec !== null) return this.simWorldHoldSec
+    return this.getWorldTime()
+  }
+
+  isSimWorldFrozen(): boolean {
+    return this.simWorldHoldSec !== null
+  }
+
   getBufferTime(): number {
     const d = this.getDuration()
     if (d <= 0) return 0
@@ -146,6 +167,7 @@ export class AudioClockImpl implements AudioClock {
     await this.context.resume()
     if (this.playing) return
     this.cancelFadeTimeout()
+    this.simWorldHoldSec = null
     this.applyUserGainImmediate()
     this.startSourceFrom(this.pausePosition)
   }
@@ -159,6 +181,7 @@ export class AudioClockImpl implements AudioClock {
     pos = Math.max(0, Math.min(pos, this.buffer.duration))
     this.pausePosition = pos
     this.stopSourceIfAny()
+    this.simWorldHoldSec = null
     this.applyUserGainImmediate()
   }
 
@@ -166,6 +189,7 @@ export class AudioClockImpl implements AudioClock {
     if (!this.buffer || !this.playing) {
       return Promise.resolve()
     }
+    this.simWorldHoldSec = this.getWorldTime()
     this.cancelFadeTimeout()
     const g = this.gain.gain
     const now = this.context.currentTime
@@ -180,13 +204,14 @@ export class AudioClockImpl implements AudioClock {
         this.fadeTimeoutId = null
         this.pause()
         resolve(undefined)
-      }, Math.ceil(durationMs) + 35)
+      }, fadeScheduleEndDelayMs(durationMs))
     })
   }
 
   seek(seconds: number): void {
     if (!this.buffer) return
     this.cancelFadeTimeout()
+    this.simWorldHoldSec = null
     const t = Math.max(0, Math.min(seconds, this.buffer.duration))
     this.pausePosition = t
     if (this.playing) {
@@ -237,6 +262,7 @@ export class AudioClockImpl implements AudioClock {
 
   dispose(): void {
     this.cancelFadeTimeout()
+    this.simWorldHoldSec = null
     this.stopSourceIfAny()
     void this.context.close()
   }

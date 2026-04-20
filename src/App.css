@@ -48,6 +48,12 @@
   cursor: pointer;
 }
 
+.btn:focus-visible,
+.touch-pad:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -178,6 +184,13 @@
   color: var(--text-h);
   cursor: pointer;
   touch-action: manipulation;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touch-pad {
+    transition: none;
+  }
 }
 
 .game-over-overlay {

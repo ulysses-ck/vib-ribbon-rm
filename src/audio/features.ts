@@ -17,6 +17,28 @@ function mixToMono(buffer: AudioBuffer): Float32Array {
   return out
 }
 
+/** Picos locales de flux separados por al menos `minSepHops` (0–1 por hop). */
+export function computeOnsetStrength(
+  flux: Float32Array,
+  minSepHops = 6,
+): Float32Array {
+  const n = flux.length
+  const out = new Float32Array(n)
+  let mx = 1e-9
+  for (let i = 0; i < n; i++) mx = Math.max(mx, flux[i]!)
+  if (mx < 1e-8) return out
+  let last = -minSepHops - 1
+  for (let i = 1; i < n - 1; i++) {
+    const f = flux[i]!
+    if (f < mx * 0.4) continue
+    if (!(f >= flux[i - 1]! && f >= flux[i + 1]!)) continue
+    if (i - last < minSepHops) continue
+    out[i] = Math.min(1, f / mx)
+    last = i
+  }
+  return out
+}
+
 function rmsChunk(data: Float32Array, start: number, end: number): number {
   let acc = 0
   const e = Math.min(end, data.length)
@@ -70,12 +92,14 @@ export function computeFeatureTrackFromMono(
       bandEnergy[b]![i] = rmsChunk(mono, qs, qe)
     }
   }
+  const onsetStrength = computeOnsetStrength(flux, 6)
   return {
     sampleRate,
     hopDuration: hopSamples / sampleRate,
     rms,
     flux,
     bandEnergy,
+    onsetStrength,
   }
 }
 
