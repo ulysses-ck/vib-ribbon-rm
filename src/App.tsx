@@ -86,6 +86,14 @@ export default function App() {
     clock.setVolume(volume)
   }, [clock, volume])
 
+  /** Al perder, bajar volumen y pausar para que la música no siga en el overlay. */
+  useEffect(() => {
+    if (!clock || screen !== 'play') return
+    if (!playHud.alive && !ended && clock.isPlaying()) {
+      void clock.pauseWithFade(480)
+    }
+  }, [clock, screen, playHud.alive, ended])
+
   useEffect(() => {
     if (screen !== 'play') return
     const id = globalThis.window.setInterval(
@@ -165,11 +173,16 @@ export default function App() {
 
   const togglePause = useCallback(async () => {
     if (!clock) return
-    if (clock.isPlaying()) clock.pause()
+    if (clock.isPlaying()) await clock.pauseWithFade(380)
     else {
       setEnded(false)
       await clock.play()
     }
+  }, [clock])
+
+  const leavePlayToMenu = useCallback(() => {
+    if (clock?.isPlaying()) void clock.pauseWithFade(420)
+    setScreen('menu')
   }, [clock])
 
   const retryFromOverlay = async () => {
@@ -374,7 +387,7 @@ export default function App() {
       {screen === 'play' && course && features && (
         <section className="play-panel">
           <div className="play-toolbar" data-ui-tick={playUiTick}>
-            <button type="button" className="btn" onClick={() => setScreen('menu')}>
+            <button type="button" className="btn" onClick={leavePlayToMenu}>
               Menú
             </button>
             <button type="button" className="btn" onClick={() => void togglePause()}>
@@ -424,7 +437,7 @@ export default function App() {
                     <button type="button" className="btn primary" onClick={() => void retryFromOverlay()}>
                       Reintentar
                     </button>
-                    <button type="button" className="btn" onClick={() => setScreen('menu')}>
+                    <button type="button" className="btn" onClick={leavePlayToMenu}>
                       Menú
                     </button>
                   </div>

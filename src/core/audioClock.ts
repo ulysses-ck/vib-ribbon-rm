@@ -16,6 +16,8 @@ export interface AudioClock {
   isPlaying(): boolean
   play(): Promise<void>
   pause(): void
+  /** Baja el volumen en rampa y luego pausa (no corta brusco el buffer). */
+  pauseWithFade(durationMs?: number): Promise<void>
   seek(seconds: number): void
   dispose(): void
 }
@@ -38,6 +40,9 @@ export class AudioClockImpl implements AudioClock {
   private playing = false
   private offsetMs = 0
   private onEnded: (() => void) | null = null
+  /** Volumen lineal elegido por el usuario (0–1); el nodo gain puede animarse durante fundidos. */
+  private userGainLinear = 0.85
+  private fadeTimeoutId: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
     this.context = new AudioContext()
@@ -45,9 +50,16 @@ export class AudioClockImpl implements AudioClock {
     this.analyser.fftSize = 512
     this.analyser.smoothingTimeConstant = 0.72
     this.gain = this.context.createGain()
-    this.gain.gain.value = 0.85
+    this.gain.gain.value = this.userGainLinear
     this.analyser.connect(this.gain)
     this.gain.connect(this.context.destination)
+  }
+
+  private cancelFadeTimeout(): void {
+    if (this.fadeTimeoutId !== null) {
+      clearTimeout(this.fadeTimeoutId)
+      this.fadeTimeoutId = null
+    }
   }
 
   setOnEnded(handler: (() => void) | null): void {
@@ -55,10 +67,12 @@ export class AudioClockImpl implements AudioClock {
   }
 
   setBuffer(audioBuffer: AudioBuffer): void {
+    this.cancelFadeTimeout()
     this.stopSourceIfAny()
     this.buffer = audioBuffer
     this.pausePosition = 0
     this.playing = false
+    this.applyUserGainImmediate()
   }
 
   getBuffer(): AudioBuffer | null {
@@ -78,11 +92,20 @@ export class AudioClockImpl implements AudioClock {
   }
 
   setVolume(linear: number): void {
-    this.gain.gain.value = Math.max(0, Math.min(1, linear))
+    this.userGainLinear = Math.max(0, Math.min(1, linear))
+    this.cancelFadeTimeout()
+    this.applyUserGainImmediate()
   }
 
   getVolume(): number {
-    return this.gain.gain.value
+    return this.userGainLinear
+  }
+
+  private applyUserGainImmediate(): void {
+    const g = this.gain.gain
+    const t = this.context.currentTime
+    g.cancelScheduledValues(t)
+    g.setValueAtTime(this.userGainLinear, t)
   }
 
   /**
@@ -122,25 +145,53 @@ export class AudioClockImpl implements AudioClock {
     if (!this.buffer) return
     await this.context.resume()
     if (this.playing) return
+    this.cancelFadeTimeout()
+    this.applyUserGainImmediate()
     this.startSourceFrom(this.pausePosition)
   }
 
   pause(): void {
     if (!this.buffer || !this.playing) return
+    this.cancelFadeTimeout()
     let pos =
       this.bufferOffsetAtStart +
       (this.context.currentTime - this.playStartContextTime)
     pos = Math.max(0, Math.min(pos, this.buffer.duration))
     this.pausePosition = pos
     this.stopSourceIfAny()
+    this.applyUserGainImmediate()
+  }
+
+  pauseWithFade(durationMs = 480): Promise<void> {
+    if (!this.buffer || !this.playing) {
+      return Promise.resolve()
+    }
+    this.cancelFadeTimeout()
+    const g = this.gain.gain
+    const now = this.context.currentTime
+    const durSec = Math.max(0.04, durationMs / 1000)
+    g.cancelScheduledValues(now)
+    const v0 = Math.min(g.value, this.userGainLinear)
+    g.setValueAtTime(v0, now)
+    g.linearRampToValueAtTime(0, now + durSec)
+
+    return new Promise((resolve) => {
+      this.fadeTimeoutId = setTimeout(() => {
+        this.fadeTimeoutId = null
+        this.pause()
+        resolve(undefined)
+      }, Math.ceil(durationMs) + 35)
+    })
   }
 
   seek(seconds: number): void {
     if (!this.buffer) return
+    this.cancelFadeTimeout()
     const t = Math.max(0, Math.min(seconds, this.buffer.duration))
     this.pausePosition = t
     if (this.playing) {
       this.stopSourceIfAny()
+      this.applyUserGainImmediate()
       this.startSourceFrom(t)
     }
   }
@@ -185,6 +236,7 @@ export class AudioClockImpl implements AudioClock {
   }
 
   dispose(): void {
+    this.cancelFadeTimeout()
     this.stopSourceIfAny()
     void this.context.close()
   }
