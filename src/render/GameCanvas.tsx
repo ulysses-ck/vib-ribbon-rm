@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AudioClock } from '../core/audioClock'
 import type { CourseData, FeatureTrack } from '../core/types'
 import { featureIndexAtTime } from '../audio/features'
@@ -9,32 +9,81 @@ import {
   type GameSimState,
   tickSim,
 } from '../game/sim'
+import type { KeyBindings } from '../input/controlSettings'
+import { slotForCode } from '../input/controlSettings'
+import { emptyFrameInput, type FrameInput, type GameActionSlot } from '../input/frameInput'
+import { TouchControls } from '../ui/TouchControls'
 
 export interface GameCanvasProps {
   clock: AudioClock
   course: CourseData
   features: FeatureTrack
   sim: GameSimState
+  bindings: KeyBindings
+  showTouchPads: boolean
+  onHud?: (s: { alive: boolean; reason: GameSimState['reason'] }) => void
 }
 
 /**
- * Single `requestAnimationFrame` loop: sim tick + debug FFT + course polyline + player.
+ * `requestAnimationFrame` loop: input edges, sim tick, HiDPI canvas, debug draw.
  */
-export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
+export function GameCanvas({
+  clock,
+  course,
+  features,
+  sim,
+  bindings,
+  showTouchPads,
+  onHud,
+}: GameCanvasProps) {
+  const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const jumpRef = useRef(false)
   const lastNowRef = useRef<number | null>(null)
+  const keysDownRef = useRef(new Set<string>())
+  const edgeRef = useRef<FrameInput>(emptyFrameInput())
+  const lastHudRef = useRef({ alive: sim.alive, reason: sim.reason })
+
+  const [logicalSize, setLogicalSize] = useState({ w: 960, h: 440 })
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.key === ' ') {
-        e.preventDefault()
-        jumpRef.current = true
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      setLogicalSize({
+        w: Math.max(280, Math.floor(r.width)),
+        h: 440,
+      })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return
+      const slot = slotForCode(bindings, e.code)
+      if (!slot) return
+      if (!keysDownRef.current.has(e.code)) {
+        edgeRef.current[slot] = true
+        keysDownRef.current.add(e.code)
+      }
+      e.preventDefault()
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      keysDownRef.current.delete(e.code)
+    }
+    globalThis.window.addEventListener('keydown', onKeyDown)
+    globalThis.window.addEventListener('keyup', onKeyUp)
+    return () => {
+      globalThis.window.removeEventListener('keydown', onKeyDown)
+      globalThis.window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [bindings])
+
+  const fireTouchSlot = (slot: GameActionSlot) => {
+    edgeRef.current[slot] = true
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -88,7 +137,7 @@ export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
       ctx.fillText('Offline RMS window (debug)', 10, 158)
     }
 
-    const drawCourse = (scroll: number) => {
+    const drawCourse = (scroll: number, _w: number, h: number) => {
       ctx.strokeStyle = 'rgba(230, 240, 255, 0.92)'
       ctx.lineWidth = 2
       ctx.beginPath()
@@ -108,7 +157,7 @@ export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
         const x1 = o.x1 - scroll
         if (o.kind === 'pit') {
           ctx.fillStyle = 'rgba(255, 60, 60, 0.12)'
-          ctx.fillRect(x0, 0, x1 - x0, canvas.height)
+          ctx.fillRect(x0, 0, x1 - x0, h)
         } else {
           ctx.strokeStyle = 'rgba(255, 120, 160, 0.55)'
           ctx.strokeRect(x0, 240, x1 - x0, 120)
@@ -119,7 +168,9 @@ export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
     const drawPlayer = () => {
       const x = PLAYER_ANCHOR_X
       const y = sim.playerY
-      ctx.fillStyle = sim.alive ? 'rgba(180, 255, 200, 0.95)' : 'rgba(255, 120, 120, 0.85)'
+      ctx.fillStyle = sim.alive
+        ? 'rgba(180, 255, 200, 0.95)'
+        : 'rgba(255, 120, 120, 0.85)'
       ctx.beginPath()
       ctx.moveTo(x, y)
       ctx.lineTo(x - PLAYER_HALF_W, y + PLAYER_H)
@@ -129,29 +180,52 @@ export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
     }
 
     const loop = (now: number) => {
+      const lw = logicalSize.w
+      const lh = logicalSize.h
+      const dpr = Math.min(2, globalThis.devicePixelRatio || 1)
+      const tw = Math.max(1, Math.floor(lw * dpr))
+      const th = Math.max(1, Math.floor(lh * dpr))
+      if (canvas.width !== tw || canvas.height !== th) {
+        canvas.width = tw
+        canvas.height = th
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
       const last = lastNowRef.current ?? now
       const dt = Math.min(0.05, (now - last) / 1000)
       lastNowRef.current = now
 
-      const t = clock.getWorldTime()
-      const jump = jumpRef.current
-      jumpRef.current = false
-      tickSim(sim, course, t, dt, jump)
+      const frame: FrameInput = { ...edgeRef.current }
+      edgeRef.current = emptyFrameInput()
 
-      const w = canvas.width
-      const h = canvas.height
+      const t = clock.getWorldTime()
+      tickSim(sim, course, t, dt, frame)
+
+      if (onHud) {
+        if (sim.alive !== lastHudRef.current.alive || sim.reason !== lastHudRef.current.reason) {
+          lastHudRef.current = { alive: sim.alive, reason: sim.reason }
+          onHud({ alive: sim.alive, reason: sim.reason })
+        }
+      }
+
+      const w = lw
+      const h = lh
       ctx.clearRect(0, 0, w, h)
       ctx.fillStyle = 'rgba(12, 14, 22, 0.96)'
       ctx.fillRect(0, 0, w, h)
 
       drawSpectrum(w)
       drawFeatureDebug(w, t)
-      drawCourse(sim.scroll)
+      drawCourse(sim.scroll, w, h)
       drawPlayer()
 
       ctx.fillStyle = 'rgba(255,255,255,0.55)'
       ctx.font = '12px ui-monospace, monospace'
-      ctx.fillText(`t=${t.toFixed(2)}s  scroll=${sim.scroll.toFixed(0)}  alive=${sim.alive} (${sim.reason})`, 10, h - 12)
+      ctx.fillText(
+        `t=${t.toFixed(2)}s  scroll=${sim.scroll.toFixed(0)}  alive=${sim.alive} (${sim.reason})`,
+        10,
+        h - 12,
+      )
 
       raf = requestAnimationFrame(loop)
     }
@@ -161,16 +235,18 @@ export function GameCanvas({ clock, course, features, sim }: GameCanvasProps) {
       cancelAnimationFrame(raf)
       lastNowRef.current = null
     }
-  }, [clock, course, features, sim])
+  }, [clock, course, features, sim, logicalSize.w, logicalSize.h, onHud])
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="game-canvas"
-      width={960}
-      height={440}
-      role="img"
-      aria-label="Game view with audio debug and course"
-    />
+    <div className="game-canvas-wrap" ref={wrapRef}>
+      <canvas
+        ref={canvasRef}
+        className="game-canvas"
+        width={960}
+        height={440}
+        aria-label="Vista de juego y depuración de audio"
+      />
+      <TouchControls visible={showTouchPads} onSlot={fireTouchSlot} />
+    </div>
   )
 }

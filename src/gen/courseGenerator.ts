@@ -23,6 +23,12 @@ function maxFlux(track: FeatureTrack): number {
   return m
 }
 
+function maxBandSum(track: FeatureTrack, i: number): number {
+  let s = 1e-9
+  for (let b = 0; b < 4; b++) s = Math.max(s, track.bandEnergy[b]![i] ?? 0)
+  return s
+}
+
 /**
  * Maps feature columns to a ground polyline + hazards.
  * Same inputs ⇒ same `CourseData`.
@@ -38,19 +44,24 @@ export function generateCourse(
   const ground: Vec2[] = []
   const obstacles: CourseObstacle[] = []
   const baseline = 320
+  let lastObstacleEnd = -Number.MAX_VALUE
+  const minGap = params.minObstacleGapWorld
 
   for (let i = 0; i < n; i++) {
     const x = i * dx
     const e = track.rms[i] ?? 0
     const fl = track.flux[i] ?? 0
     const norm = mf > 0 ? fl / mf : 0
+    const bandMix = maxBandSum(track, i)
     const wobble =
       Math.sin(i * 0.31 + params.seed * 0.001) * 0.35 +
-      (rng() - 0.5) * 0.6 * e * 12
+      (rng() - 0.5) * 0.6 * e * 12 +
+      (rng() - 0.5) * bandMix * 28
     const y = baseline + e * params.amplitude * 40 + wobble * 20
     ground.push({ x, y })
 
-    if (norm > params.fluxThreshold && rng() > 0.72) {
+    const canSpawn = x - lastObstacleEnd >= minGap
+    if (canSpawn && norm > params.fluxThreshold && rng() > 0.72) {
       const width = 48 + rng() * 100
       if (rng() < 0.48) {
         const o: CourseObstacle = {
@@ -60,13 +71,16 @@ export function generateCourse(
           clearance: 0,
         }
         obstacles.push(o)
+        lastObstacleEnd = Math.max(lastObstacleEnd, o.x1)
       } else {
-        obstacles.push({
+        const o: CourseObstacle = {
           kind: 'spike',
           x0: x + rng() * dx * 0.3,
           x1: x + width * 0.65,
           clearance: 55 + rng() * 110,
-        })
+        }
+        obstacles.push(o)
+        lastObstacleEnd = Math.max(lastObstacleEnd, o.x1)
       }
     }
   }

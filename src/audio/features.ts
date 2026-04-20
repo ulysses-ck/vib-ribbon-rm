@@ -1,5 +1,7 @@
 import type { FeatureTrack } from '../core/types'
 
+const N_BANDS = 4 as const
+
 function mixToMono(buffer: AudioBuffer): Float32Array {
   const n = buffer.length
   if (buffer.numberOfChannels === 1) {
@@ -15,41 +17,77 @@ function mixToMono(buffer: AudioBuffer): Float32Array {
   return out
 }
 
+function rmsChunk(data: Float32Array, start: number, end: number): number {
+  let acc = 0
+  const e = Math.min(end, data.length)
+  const s = Math.max(0, start)
+  const w = Math.max(1, e - s)
+  for (let j = s; j < e; j++) {
+    const v = data[j]!
+    acc += v * v
+  }
+  return Math.sqrt(acc / w)
+}
+
 /**
- * Deterministic RMS + spectral-flux-ish series at fixed hop rate (offline).
- * Intended for course generation and debug overlays independent of live FFT.
+ * Deterministic features from mono PCM: RMS, flux, and four sub-window
+ * energy bands per hop (coarse texture, not a full STFT).
+ */
+export function computeFeatureTrackFromMono(
+  mono: Float32Array,
+  sampleRate: number,
+  hopDurationSec = 1 / 30,
+): FeatureTrack {
+  const hopSamples = Math.max(256, Math.floor(sampleRate * hopDurationSec))
+  const n = Math.max(1, Math.floor(mono.length / hopSamples))
+  const rms = new Float32Array(n)
+  const flux = new Float32Array(n)
+  const bandEnergy: [
+    Float32Array,
+    Float32Array,
+    Float32Array,
+    Float32Array,
+  ] = [
+    new Float32Array(n),
+    new Float32Array(n),
+    new Float32Array(n),
+    new Float32Array(n),
+  ]
+  let prev = 0
+  for (let i = 0; i < n; i++) {
+    const start = i * hopSamples
+    const end = Math.min(start + hopSamples, mono.length)
+    const c = rmsChunk(mono, start, end)
+    rms[i] = c
+    flux[i] = Math.abs(c - prev)
+    prev = c
+
+    const span = Math.max(1, end - start)
+    const q = Math.floor(span / N_BANDS)
+    for (let b = 0; b < N_BANDS; b++) {
+      const qs = start + b * q
+      const qe = b === N_BANDS - 1 ? end : start + (b + 1) * q
+      bandEnergy[b]![i] = rmsChunk(mono, qs, qe)
+    }
+  }
+  return {
+    sampleRate,
+    hopDuration: hopSamples / sampleRate,
+    rms,
+    flux,
+    bandEnergy,
+  }
+}
+
+/**
+ * Deterministic RMS + flux + band energies at fixed hop rate (offline).
  */
 export function computeFeatureTrack(
   buffer: AudioBuffer,
   hopDurationSec = 1 / 30,
 ): FeatureTrack {
-  const sr = buffer.sampleRate
   const mono = mixToMono(buffer)
-  const hopSamples = Math.max(256, Math.floor(sr * hopDurationSec))
-  const n = Math.max(1, Math.floor(mono.length / hopSamples))
-  const rms = new Float32Array(n)
-  const flux = new Float32Array(n)
-  let prev = 0
-  for (let i = 0; i < n; i++) {
-    const start = i * hopSamples
-    let acc = 0
-    const end = Math.min(start + hopSamples, mono.length)
-    const w = end - start
-    for (let j = start; j < end; j++) {
-      const v = mono[j]
-      acc += v * v
-    }
-    const c = Math.sqrt(acc / Math.max(1, w))
-    rms[i] = c
-    flux[i] = Math.abs(c - prev)
-    prev = c
-  }
-  return {
-    sampleRate: sr,
-    hopDuration: hopSamples / sr,
-    rms,
-    flux,
-  }
+  return computeFeatureTrackFromMono(mono, buffer.sampleRate, hopDurationSec)
 }
 
 export function featureIndexAtTime(track: FeatureTrack, tSec: number): number {

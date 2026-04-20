@@ -1,4 +1,5 @@
 import type { CourseData, CourseObstacle } from '../core/types'
+import type { FrameInput } from '../input/frameInput'
 
 export const GRAVITY = 1850
 export const JUMP_V = -620
@@ -69,15 +70,21 @@ function spikeHit(
 
 /**
  * Advance simulation by `dtSec` using `worldTimeSec` for scroll position.
+ * `pressK` triggers jump (Vib-Ribbon style default on K); H/J/L reserved for future ribbon moves.
  */
 export function tickSim(
   state: GameSimState,
   course: CourseData,
   worldTimeSec: number,
   dtSec: number,
-  jumpRequested: boolean,
+  input: FrameInput,
 ): void {
   if (!state.alive) return
+  const jumpRequested = input.pressK
+  void input.pressH
+  void input.pressJ
+  void input.pressL
+
   state.scroll = worldTimeSec * SCROLL_SPEED
   const px = state.scroll + PLAYER_ANCHOR_X
   const support = sampleGroundY(course, px)

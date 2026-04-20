@@ -9,6 +9,8 @@ export interface FeatureTrack {
   hopDuration: number
   rms: Float32Array
   flux: Float32Array
+  /** Four coarse band energies per hop (same length as `rms`). */
+  bandEnergy: [Float32Array, Float32Array, Float32Array, Float32Array]
 }
 
 export type ObstacleKind = 'pit' | 'spike'
@@ -36,4 +38,6 @@ export interface CourseGenParams {
   amplitude: number
   /** Obstacle density driven by normalized flux above this threshold. */
   fluxThreshold: number
+  /** Minimum world X between obstacle placements. */
+  minObstacleGapWorld: number
 }

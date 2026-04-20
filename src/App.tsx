@@ -5,17 +5,40 @@ import { createAudioClock, type AudioClock } from './core/audioClock'
 import type { CourseData, CourseGenParams, FeatureTrack } from './core/types'
 import { generateCourse } from './gen/courseGenerator'
 import { createSimState, resetSim, type GameSimState } from './game/sim'
+import {
+  defaultControlSettings,
+  loadControlSettings,
+  saveControlSettings,
+  type ControlSettings,
+} from './input/controlSettings'
+import type { GameActionSlot } from './input/frameInput'
 import { GameCanvas } from './render/GameCanvas'
+import { useTouchUi } from './ui/useTouchUi'
 import './App.css'
 
 type Screen = 'menu' | 'options' | 'play'
+
+const SLOT_LABEL: Record<GameActionSlot, string> = {
+  pressH: 'H — hueco / forma (reservado)',
+  pressJ: 'J — forma (reservado)',
+  pressK: 'K — salto',
+  pressL: 'L — forma (reservado)',
+}
 
 const defaultGenParams = (): CourseGenParams => ({
   seed: 42,
   worldUnitsPerSecond: 200,
   amplitude: 1,
   fluxThreshold: 0.52,
+  minObstacleGapWorld: 120,
 })
+
+function isTypingTarget(el: EventTarget | null): boolean {
+  if (!el || !(el instanceof HTMLElement)) return false
+  const tag = el.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return el.isContentEditable
+}
 
 export default function App() {
   const [clock, setClock] = useState<AudioClock | null>(null)
@@ -28,9 +51,17 @@ export default function App() {
   const [genParams, setGenParams] = useState<CourseGenParams>(defaultGenParams)
   const [ended, setEnded] = useState(false)
   const [playUiTick, setPlayUiTick] = useState(0)
+  const [controls, setControls] = useState<ControlSettings>(() => loadControlSettings())
+  const [listeningSlot, setListeningSlot] = useState<GameActionSlot | null>(null)
+  const [bindError, setBindError] = useState<string | null>(null)
+  const [playHud, setPlayHud] = useState<{
+    alive: boolean
+    reason: GameSimState['reason']
+  }>({ alive: true, reason: 'playing' })
 
   const [sim] = useState<GameSimState>(() => createSimState())
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const showTouchPads = useTouchUi()
 
   useEffect(() => {
     const c = createAudioClock()
@@ -57,9 +88,44 @@ export default function App() {
 
   useEffect(() => {
     if (screen !== 'play') return
-    const id = window.setInterval(() => setPlayUiTick((n) => (n + 1) % 1_000_000), 150)
-    return () => window.clearInterval(id)
+    const id = globalThis.window.setInterval(
+      () => setPlayUiTick((n) => (n + 1) % 1_000_000),
+      150,
+    )
+    return () => globalThis.window.clearInterval(id)
   }, [screen])
+
+  useEffect(() => {
+    if (!listeningSlot || screen !== 'options') return
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.code === 'Escape') {
+        setListeningSlot(null)
+        setBindError(null)
+        return
+      }
+      const code = e.code
+      setControls((prev) => {
+        const other = (
+          Object.entries(prev.bindings) as [GameActionSlot, string][]
+        ).find(([k, v]) => v === code && k !== listeningSlot)?.[0]
+        if (other) {
+          setBindError(`Esa tecla ya está en ${SLOT_LABEL[other]}. Pulsa Escape para cancelar.`)
+          return prev
+        }
+        setBindError(null)
+        const nextBindings = { ...prev.bindings, [listeningSlot]: code }
+        const next: ControlSettings = { ...prev, bindings: nextBindings }
+        saveControlSettings(next)
+        return next
+      })
+      setListeningSlot(null)
+    }
+    globalThis.window.addEventListener('keydown', onKey, true)
+    return () => globalThis.window.removeEventListener('keydown', onKey, true)
+  }, [listeningSlot, screen])
 
   const rebuildCourse = useCallback(
     (feat: FeatureTrack, params: CourseGenParams) => {
@@ -91,6 +157,7 @@ export default function App() {
     if (!clock || !course || !features) return
     setEnded(false)
     resetSim(sim, course)
+    setPlayHud({ alive: true, reason: 'playing' })
     clock.seek(0)
     setScreen('play')
     await clock.play()
@@ -104,6 +171,17 @@ export default function App() {
       await clock.play()
     }
   }, [clock])
+
+  const retryFromOverlay = async () => {
+    if (!clock || !course) return
+    setEnded(false)
+    resetSim(sim, course)
+    setPlayHud({ alive: true, reason: 'playing' })
+    clock.seek(0)
+    await clock.play()
+  }
+
+  const showGameOver = screen === 'play' && (!playHud.alive || ended)
 
   if (!clock) {
     return <div className="app-shell">Inicializando audio…</div>
@@ -136,11 +214,7 @@ export default function App() {
             <button type="button" className="btn primary" onClick={openFilePicker}>
               Cargar pista
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setScreen('options')}
-            >
+            <button type="button" className="btn" onClick={() => setScreen('options')}>
               Opciones
             </button>
             <button
@@ -162,13 +236,62 @@ export default function App() {
               'Elegí un archivo de audio para decodificar y generar el recorrido.'
             )}
           </p>
-          <p className="hint keys">En juego: espacio para saltar · P para pausar</p>
+          <p className="hint keys">
+            Teclas <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> (por defecto):{' '}
+            <strong>K</strong> salta. Reasignación en Opciones. Pausa: <kbd>P</kbd>.
+          </p>
+          <p className="hint tutorial">
+            Tutorial: cargá una pista, ajustá compensación (ms) si el scroll va desfasado, iniciá
+            juego y usá la barra para seek. En móvil/tablet aparecen pads táctiles.
+          </p>
         </section>
       )}
 
       {screen === 'options' && (
         <section className="panel options-panel">
           <h2>Opciones</h2>
+
+          <h3 className="options-sub">Controles (teclado)</h3>
+          <p className="hint small">
+            {listeningSlot
+              ? 'Pulsá una tecla para asignar (Escape cancela).'
+              : 'Hacé clic en «Cambiar» junto a una acción.'}
+          </p>
+          {bindError && <p className="bind-error">{bindError}</p>}
+          {(Object.keys(controls.bindings) as GameActionSlot[]).map((slot) => (
+            <div key={slot} className="bind-row">
+              <span className="bind-label">{SLOT_LABEL[slot]}</span>
+              <code className="bind-code">{controls.bindings[slot]}</code>
+              <button
+                type="button"
+                className="btn small"
+                disabled={listeningSlot !== null && listeningSlot !== slot}
+                onClick={() => {
+                  setBindError(null)
+                  setListeningSlot(listeningSlot === slot ? null : slot)
+                }}
+              >
+                {listeningSlot === slot ? 'Escuchando…' : 'Cambiar'}
+              </button>
+            </div>
+          ))}
+          <div className="menu-row">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                const d = defaultControlSettings()
+                setControls(d)
+                saveControlSettings(d)
+                setListeningSlot(null)
+                setBindError(null)
+              }}
+            >
+              Restaurar teclas H J K L
+            </button>
+          </div>
+
+          <h3 className="options-sub">Audio y curso</h3>
           <label className="field">
             <span>Compensación (ms)</span>
             <input
@@ -217,6 +340,22 @@ export default function App() {
             />
             <output>{genParams.fluxThreshold.toFixed(2)}</output>
           </label>
+          <label className="field">
+            <span>Separación mín. obstáculos (px mundo)</span>
+            <input
+              type="range"
+              min={40}
+              max={400}
+              value={Math.round(genParams.minObstacleGapWorld)}
+              onChange={(e) =>
+                setGenParams((p) => ({
+                  ...p,
+                  minObstacleGapWorld: Number(e.target.value),
+                }))
+              }
+            />
+            <output>{Math.round(genParams.minObstacleGapWorld)}</output>
+          </label>
           <div className="menu-row">
             <button
               type="button"
@@ -258,18 +397,50 @@ export default function App() {
             </span>
             {ended && <span className="badge">Fin de pista</span>}
           </div>
-          <GameCanvas clock={clock} course={course} features={features} sim={sim} />
+
+          <div className="play-stage">
+            <GameCanvas
+              clock={clock}
+              course={course}
+              features={features}
+              sim={sim}
+              bindings={controls.bindings}
+              showTouchPads={showTouchPads}
+              onHud={setPlayHud}
+            />
+            {showGameOver && (
+              <div className="game-over-overlay" role="dialog" aria-modal="true">
+                <div className="game-over-card">
+                  <h2>{ended && playHud.alive ? 'Fin de pista' : 'Partida terminada'}</h2>
+                  <p className="game-over-reason">
+                    {!playHud.alive && (
+                      <>
+                        Motivo: <strong>{playHud.reason}</strong>
+                      </>
+                    )}
+                    {ended && playHud.alive && <span>La música llegó al final.</span>}
+                  </p>
+                  <div className="menu-row">
+                    <button type="button" className="btn primary" onClick={() => void retryFromOverlay()}>
+                      Reintentar
+                    </button>
+                    <button type="button" className="btn" onClick={() => setScreen('menu')}>
+                      Menú
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <p className="hint keys">
-            Espacio: salto · barra: posición (seek en tiempo decodificado; offset en opciones
-            afecta el tiempo de mundo)
+            <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd>: la ranura <strong>K</strong> es salto
+            (reasignable). Barra: seek en buffer. Offset en opciones afecta el tiempo de mundo.
           </p>
         </section>
       )}
 
-      <GlobalKeyHandler
-        enabled={screen === 'play'}
-        onPauseToggle={() => void togglePause()}
-      />
+      <GlobalKeyHandler enabled={screen === 'play'} onPauseToggle={() => void togglePause()} />
     </div>
   )
 }
@@ -284,13 +455,14 @@ function GlobalKeyHandler({
   useEffect(() => {
     if (!enabled) return
     const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault()
         onPauseToggle()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    globalThis.window.addEventListener('keydown', onKey)
+    return () => globalThis.window.removeEventListener('keydown', onKey)
   }, [enabled, onPauseToggle])
   return null
 }
